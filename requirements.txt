@@ -1,0 +1,53 @@
+# Coze API client
+cozepy
+
+# Telegram bot
+pyTelegramBotAPI
+
+# Async SQLite
+aiosqlite
+
+# LangChain core & integrations
+langchain
+langchain-core
+langchain-text-splitters
+langchain-huggingface
+langchain-chroma
+langchain-community
+
+# Vector store
+chromadb
+
+# Embeddings
+sentence-transformers
+transformers
+tokenizers
+
+# PDF processing
+pdfplumber
+
+# Tokenization (for usage tracking)
+tiktoken
+
+# Environment variables
+python-dotenv
+
+# HTTP clients
+httpx
+aiohttp
+requests
+
+# ML/Deep Learning (for embeddings)
+torch
+numpy
+scikit-learn
+
+# Data validation
+pydantic
+pydantic-settings
+
+# Other utilities
+tqdm
+huggingface-hub
+safetensors
+regex

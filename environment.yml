@@ -1,0 +1,52 @@
+name: hobsbawm-bot
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11.14
+  - pip
+  # Core scientific/ML
+  - numpy
+  - scikit-learn
+  - pytorch
+  # Networking / HTTP
+  - requests
+  - httpx
+  - aiohttp
+  # Data validation
+  - pydantic
+  # Utilities
+  - tqdm
+  - safetensors
+  - regex
+  # Env vars
+  - python-dotenv
+  
+  # Pip-only packages go here
+  - pip:
+      - huggingface-hub
+      - transformers
+      - tokenizers
+      # Coze API client
+      - cozepy
+      # Telegram bot
+      - pyTelegramBotAPI
+      # Async SQLite
+      - aiosqlite
+      # LangChain ecosystem
+      - langchain
+      - langchain-core
+      - langchain-text-splitters
+      - langchain-huggingface
+      - langchain-chroma
+      - langchain-community
+      # Vector store
+      - chromadb
+      # Embeddings
+      - sentence-transformers
+      # PDF processing
+      - pdfplumber
+      # Tokenization (usage tracking)
+      - tiktoken
+      # Additional settings
+      - pydantic-settings

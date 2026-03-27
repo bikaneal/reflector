@@ -1,0 +1,9 @@
+**/__pycache__
+**venv/
+**.env**
+**test.ipynb**
+personality_data/**
+personality_data/db/**
+personality_data/documents/**
+logs/*.json
+**.DS_Store**
