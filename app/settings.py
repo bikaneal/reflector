@@ -11,9 +11,9 @@ COZE_API_BASE = os.getenv("COZE_API_BASE", "https://www.coze.com/")
 COZE_BOT_ID = os.getenv("COZE_BOT_ID")
 COZE_USER_ID = os.getenv("COZE_USER_ID")
 
-PRIMARY_DB_PATH = os.path.join(PROJECT_ROOT, os.getenv("PRIMARY_DB_PATH"))
+#PRIMARY_DB_PATH = os.path.join(PROJECT_ROOT, os.getenv("PRIMARY_DB_PATH"))
 
-PRIMARY_DB_Documents_PATH = os.path.join(PROJECT_ROOT, os.getenv("PRIMARY_DB_Documents_PATH"))
+#PRIMARY_DB_Documents_PATH = os.path.join(PROJECT_ROOT, os.getenv("PRIMARY_DB_Documents_PATH"))
 
 # 302.ai configuration
 # Accept common env var names, prefer API_302AI_KEY

@@ -52,35 +52,42 @@ def _parse_llm_json(raw: str) -> dict:
         "layer_complete": False,
         "layer_data": None,
     }
-
+ 
     if not raw:
+        logger.warning("LLM вернул пустой ответ.")
         return _fallback.copy()
-
+ 
+    logger.info("LLM raw output (first 500 chars): %s", raw)
+ 
     # Strip possible markdown fences (```json … ``` or ``` … ```)
     clean = re.sub(r"```(?:json)?", "", raw).strip().rstrip("`").strip()
-
+    logger.debug("LLM output after cleaning markdown (first 500 chars): %s", clean)
+ 
     def _try_parse(s: str) -> dict | None:
         try:
             result = json.loads(s)
             if isinstance(result, dict):
                 result.setdefault("layer_complete", False)
                 result.setdefault("layer_data", None)
+                logger.info("JSON успешно распарсен: %s", result)
                 return result
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
+            logger.warning("JSONDecodeError: %s | Строка: %s", e, s[:300])
             return None
-
+ 
     # Attempt 1 – direct parse
     parsed = _try_parse(clean)
     if parsed:
         return parsed
-
+ 
     # Attempt 2 – find the first {...} block
     m = re.search(r"\{.*\}", clean, re.DOTALL)
     if m:
+        logger.debug("Пробуем распарсить первый найденный JSON-блок: %s", m.group()[:300])
         parsed = _try_parse(m.group())
         if parsed:
             return parsed
-
+ 
     logger.warning("JSON parse failed. First 300 chars: %s", raw[:300])
     # Return the raw text as a response so the user sees something meaningful
     return {"response": raw.strip(), "layer_complete": False, "layer_data": None}
@@ -140,7 +147,7 @@ async def p1_goals(llm, query: str, history: str = "") -> dict:
 Слой завершён, когда студент назвал конкретные задачи / цели как ожидаемые результаты или чёткие намерения (не расплывчатости).
 Только тогда "layer_complete": true.
 
-━━━ ФОРМАТ ОТВЕТА — строго JSON, без markdown ━━━
+━━━ ВАЖНО: ФОРМАТ ОТВЕТА — СТРОГО JSON по указанной ниже структуре, без markdown ━━━
 {{
   "response": "<твой ответ студенту>",
   "layer_complete": <true | false>,
@@ -199,7 +206,7 @@ async def p1_actions(llm, query: str, goals_data: str, history: str = "") -> dic
 ━━━ КРИТЕРИЙ ЗАВЕРШЕНИЯ СЛОЯ ━━━
 Слой завершён, когда восстановлена связная последовательность конкретных действий без оценок и объяснений.
 
-━━━ ФОРМАТ ОТВЕТА — строго JSON, без markdown ━━━
+━━━ ВАЖНО: ФОРМАТ ОТВЕТА — СТРОГО JSON по указанной ниже структуре, без markdown ━━━
 {{
   "response": "<твой ответ студенту>",
   "layer_complete": <true | false>,
@@ -259,7 +266,7 @@ async def p1_results(llm, query: str, goals_data: str, actions_data: str, histor
 (1) Зафиксированы фактические результаты по задачам.
 (2) Зафиксированы конкретные точки остановки / затруднений без оценок и причин.
 
-━━━ ФОРМАТ ОТВЕТА — строго JSON, без markdown ━━━
+━━━ ВАЖНО: ФОРМАТ ОТВЕТА — СТРОГО JSON по указанной ниже структуре, без markdown ━━━
 {{
   "response": "<твой ответ студенту>",
   "layer_complete": <true | false>,
@@ -306,7 +313,7 @@ async def p1_summary(llm, goals: str, actions: str, results: str, history: str =
 4. Если материал неполон или противоречив — укажи на это и предложи вернуться к уточнению, поставив layer_complete: false.
 5. После итога пригласи к следующему этапу: объясни одним-двумя предложениями, что второй этап — рефлексивное действие — предполагает разбор одного эпизода в трёх слоях (деятельность, взаимодействие, мышление), и спроси, готов ли студент продолжить.
 
-ФОРМАТ ОТВЕТА — строго JSON, без markdown:
+━━━ ВАЖНО: ФОРМАТ ОТВЕТА — СТРОГО JSON по указанной ниже структуре, без markdown ━━━
 {{
   "response": "<итоговое описание недели + приглашение к следующему этапу>",
   "layer_complete": <true | false>,
@@ -349,7 +356,7 @@ async def p2_episode_select(llm, query: str, phase1_summary: str, history: str =
 ━━━ КРИТЕРИЙ ЗАВЕРШЕНИЯ ━━━
 Студент назвал конкретный, однозначно описываемый эпизод или набор задач.
 
-ФОРМАТ ОТВЕТА — строго JSON, без markdown:
+━━━ ВАЖНО: ФОРМАТ ОТВЕТА — СТРОГО JSON по указанной ниже структуре, без markdown ━━━
 {{
   "response": "<ответ студенту>",
   "layer_complete": <true | false>,
@@ -411,7 +418,7 @@ async def p2_actions(llm, query: str, episode: str, history: str = "") -> dict:
 (2) Он описан как событие (что перестало работать / не дало результата).
 (3) В описании НЕТ объяснений причин.
 
-ФОРМАТ ОТВЕТА — строго JSON, без markdown:
+━━━ ВАЖНО: ФОРМАТ ОТВЕТА — СТРОГО JSON по указанной ниже структуре, без markdown ━━━
 {{
   "response": "<ответ студенту>",
   "layer_complete": <true | false>,
@@ -473,7 +480,7 @@ async def p2_interaction(llm, query: str, episode: str, action_gap: str, history
 (2) КЛЮЧЕВАЯ ПРОВЕРКА: если убрать другого участника — разрыв исчезает.
     Если разрыв остаётся без другого → слой НЕ закрыт.
 
-ФОРМАТ ОТВЕТА — строго JSON, без markdown:
+━━━ ВАЖНО: ФОРМАТ ОТВЕТА — СТРОГО JSON по указанной ниже структуре, без markdown ━━━
 {{
   "response": "<ответ студенту>",
   "layer_complete": <true | false>,
@@ -540,7 +547,7 @@ async def p2_thinking(
 (1) Зафиксирован устойчивый способ понимания: правило, принцип или допущение.
 (2) Выявлена его НЕАДЕКВАТНОСТЬ: это правило организовывало действия и привело к сбою.
 
-ФОРМАТ ОТВЕТА — строго JSON, без markdown:
+━━━ ВАЖНО: ФОРМАТ ОТВЕТА — СТРОГО JSON по указанной ниже структуре, без markdown ━━━
 {{
   "response": "<ответ студенту>",
   "layer_complete": <true | false>,
@@ -593,7 +600,7 @@ async def p2_summary(
 4. ПРОВЕРЬ СОГЛАСОВАННОСТЬ: разрывы должны описывать один и тот же эпизод с разных сторон и не противоречить друг другу. Если они не связаны или противоречат → укажи на это и предложи вернуться к нужному слою (layer_complete: false).
 5. После итога пригласи к третьему этапу: объясни, что следующий шаг — проектирование нового способа действия на основе выявленных разрывов.
 
-ФОРМАТ ОТВЕТА — строго JSON, без markdown:
+━━━ ВАЖНО: ФОРМАТ ОТВЕТА — СТРОГО JSON по указанной ниже структуре, без markdown ━━━
 {{
   "response": "<итог + приглашение к третьему этапу>",
   "layer_complete": <true | false>,
@@ -659,7 +666,7 @@ async def p3_understanding(
 ━━━ КРИТЕРИЙ ЗАВЕРШЕНИЯ СЛОЯ ━━━
 Студент сформулировал новое основание: как теперь понимает «что здесь происходило» и «за счёт чего нужно действовать» — без оценок себя и других.
 
-ФОРМАТ ОТВЕТА — строго JSON, без markdown:
+━━━ ВАЖНО: ФОРМАТ ОТВЕТА — СТРОГО JSON по указанной ниже структуре, без markdown ━━━
 {{
   "response": "<ответ студенту>",
   "layer_complete": <true | false>,
@@ -727,7 +734,7 @@ async def p3_interaction(
 ━━━ КРИТЕРИЙ ЗАВЕРШЕНИЯ СЛОЯ ━━━
 Студент определил общий способ участия, вытекающий из нового понимания: что берёт на себя, что проясняет, что не оставляет неявным.
 
-ФОРМАТ ОТВЕТА — строго JSON, без markdown:
+━━━ ВАЖНО: ФОРМАТ ОТВЕТА — СТРОГО JSON по указанной ниже структуре, без markdown ━━━
 {{
   "response": "<ответ студенту>",
   "layer_complete": <true | false>,
@@ -798,7 +805,7 @@ async def p3_actions(
 ━━━ КРИТЕРИЙ ЗАВЕРШЕНИЯ СЛОЯ ━━━
 Действия операциональны («если X → делаю Y»), привязаны к условиям и вытекают напрямую из нового понимания и нового способа участия.
 
-ФОРМАТ ОТВЕТА — строго JSON, без markdown:
+━━━ ВАЖНО: ФОРМАТ ОТВЕТА — СТРОГО JSON по указанной ниже структуре, без markdown ━━━
 {{
   "response": "<ответ студенту>",
   "layer_complete": <true | false>,
@@ -856,7 +863,7 @@ async def p3_summary(
    Если нет — укажи, что именно не связано, и предложи вернуться к нужному слою (layer_complete: false).
 5. В конце добавь короткую завершающую фразу: студент прошёл полный цикл рефлексии и зафиксировал конкретный новый способ действия.
 
-ФОРМАТ ОТВЕТА — строго JSON, без markdown:
+━━━ ВАЖНО: ФОРМАТ ОТВЕТА — СТРОГО JSON по указанной ниже структуре, без markdown ━━━
 {{
   "response": "<финальный итог + завершающее слово>",
   "layer_complete": <true | false>,

@@ -19,19 +19,20 @@ logger = logging.getLogger(__name__)
 
 
 class CozeLLM:
-    """Async wrapper for Coze using AsyncCoze from cozepy.
-
-    Uses the cozepy AsyncCoze client. Requires that `cozepy` is installed
-    and `HAVE_COZE` is True.
-    """
+    """Async wrapper for Coze using AsyncCoze from cozepy."""
 
     def __init__(self, bot_id: str, user_id: str, api_token: str, api_base: str):
         self.bot_id = bot_id
         self.user_id = user_id
         self.coze = AsyncCoze(auth=AsyncTokenAuth(api_token), base_url=api_base)
         self.model_name = os.getenv("COZE_MODEL_NAME", "coze")
-    
-    async def ainvoke(self, prompt: str):
+
+    async def ainvoke(self, prompt: str) -> str:
+        """
+        Submit prompt to Coze and return the RAW text content of the first
+        ANSWER message.  JSON parsing is intentionally left to the caller
+        (skills._parse_llm_json).
+        """
         if isinstance(prompt, str):
             prompt = prompt.encode('utf-8').decode('utf-8')
 
@@ -42,68 +43,48 @@ class CozeLLM:
             additional_messages=[Message.build_user_question_text(prompt)],
         )
         logger.info(f"[LLM] Chat created: {chat.id}, status: {chat.status}")
-        
-        # Combine assistant messages
-        # Poll until complete with async sleep
+
+        # Poll until complete
         wait_count = 0
         while chat.status == ChatStatus.IN_PROGRESS:
             wait_count += 1
-            if wait_count % 10 == 0:  # Log every 10 seconds
+            if wait_count % 10 == 0:
                 logger.info(f"[LLM] Still waiting... ({wait_count}s)")
-            await asyncio.sleep(1)  # Use asyncio.sleep, not time.sleep  
-            chat = await self.coze.chat.retrieve(  
+            await asyncio.sleep(1)
+            chat = await self.coze.chat.retrieve(
                 conversation_id=chat.conversation_id,
-                chat_id=chat.id  
+                chat_id=chat.id
             )
-        
+
         logger.info(f"[LLM] Chat completed with status: {chat.status} after {wait_count}s")
-  
+
         try:
             messages = await self.coze.chat.messages.list(
                 conversation_id=chat.conversation_id,
-                chat_id=chat.id  
+                chat_id=chat.id
             )
         except Exception as e:
-            print(f"Error retrieving messages: {e}")
-            # Try to get the chat result directly if message retrieval fails
+            logger.error(f"Error retrieving messages: {e}")
             if hasattr(chat, 'last_error') and chat.last_error:
                 return f"Error: {chat.last_error.msg}"
-            return "Error retrieving response from AI. Please try a simpler query."
-      
-        # Filter for answer messages, handling potential validation errors
-        answer_messages = []
+            return ""
+
+        # Return the raw content of the first ANSWER message.
+        # Do NOT extract the "response" key here — _parse_llm_json does that.
         for msg in messages:
             try:
                 if hasattr(msg, 'type') and msg.type == MessageType.ANSWER:
-                    answer_messages.append(msg)
+                    raw = msg.content or ""
+                    logger.info(f"[LLM] Raw answer (first 300 chars): {raw[:300]}")
+                    return raw
             except Exception as e:
-                # Skip messages that don't validate properly (e.g., code execution messages)
-                print(f"Skipping message due to validation error: {e}")
-                continue 
-  
-        if answer_messages:  
-            # Get the first answer (usually there's only one)
-            content = answer_messages[0].content
-            try:
-                # Try to parse as JSON first
-                data = json.loads(content)
-                answer = data.get("response", content)
-            except (json.JSONDecodeError, TypeError):
-                # If not JSON, use content directly
-                answer = content
-        else:
-            answer = ""
-        # Normalize: if answer is a JSON string with {"response": ...}, extract value
-        if isinstance(answer, str):
-            try:
-                obj = json.loads(answer)
-                if isinstance(obj, dict) and "response" in obj:
-                    return str(obj["response"])
-            except Exception:
-                pass
-        return answer
+                logger.warning(f"Skipping message due to validation error: {e}")
+                continue
 
-    
+        logger.warning("[LLM] No ANSWER message found in chat response.")
+        return ""
+
+
 def load_coze_llm() -> CozeLLM | None:
     """Convenience factory: returns a CozeLLM or None if env not configured."""
     bot_id = COZE_BOT_ID
@@ -117,9 +98,9 @@ def load_coze_llm() -> CozeLLM | None:
 
 class A302LLM:
     """Simple async 302.ai client following official docs.
-    
+
     POST /v1/chat/completions?async=true -> returns {"task_id": "..."}
-    GET /v1/async_result?task_id=... -> polls until {"status_code": 200, "data": {...}, "err": ""}
+    GET  /async_result?task_id=...       -> polls until done
     """
 
     def __init__(
@@ -135,15 +116,18 @@ class A302LLM:
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
-            # Allow up to 100 concurrent connections for high student load (30-60 users)
             connector = aiohttp.TCPConnector(limit=100, limit_per_host=50)
             self._session = aiohttp.ClientSession(connector=connector)
         return self._session
 
     async def ainvoke(self, prompt: str) -> str:
-        """Submit async chat request and poll for result."""
+        """
+        Submit async chat request, poll for result, and return the RAW text
+        content string from the model.  JSON parsing is left to the caller
+        (skills._parse_llm_json).
+        """
         session = await self._get_session()
-        
+
         # Step 1: Submit async request
         logger.info(f"[302] Submitting async request ({len(prompt)} chars, model={self.model_name})")
         headers = {
@@ -154,7 +138,7 @@ class A302LLM:
             "model": self.model_name,
             "messages": [{"role": "user", "content": prompt}],
         }
-        
+
         async with session.post(
             f"{self.base_url}/v1/chat/completions",
             params={"async": "true"},
@@ -167,17 +151,17 @@ class A302LLM:
             if not task_id:
                 raise ValueError(f"No task_id in response: {result}")
             logger.info(f"[302] Got task_id: {task_id}")
-        
+
         # Step 2: Poll for result
         poll_url = f"{self.base_url}/async_result"
         start_time = asyncio.get_event_loop().time()
         poll_count = 0
         last_log_time = start_time
-        
+
         while True:
             poll_count += 1
-            await asyncio.sleep(1.0 if poll_count < 10 else 2.0)  # Fast first, then slower
-            
+            await asyncio.sleep(1.0 if poll_count < 10 else 2.0)
+
             async with session.get(
                 poll_url,
                 params={"task_id": task_id},
@@ -185,116 +169,81 @@ class A302LLM:
                 timeout=aiohttp.ClientTimeout(total=30),
             ) as resp:
                 result = await resp.json()
-                
+
                 status_code = result.get("status_code")
                 err = result.get("err", "")
                 data = result.get("data")
-                
-                # Log progress every 10s
+
                 current_time = asyncio.get_event_loop().time()
                 elapsed = current_time - start_time
                 if current_time - last_log_time >= 10.0:
-                    logger.info(f"[302] Polling... {elapsed:.1f}s elapsed (poll #{poll_count}, status: {status_code}, err: {err})")
+                    logger.info(
+                        f"[302] Polling... {elapsed:.1f}s elapsed "
+                        f"(poll #{poll_count}, status: {status_code}, err: {err})"
+                    )
                     last_log_time = current_time
-                
-                # Check if done: status_code 200, has data, err is empty or not "pending"
+
                 if status_code == 200 and data and err not in ("result pending", "pending"):
                     logger.info(f"[302] Completed in {elapsed:.1f}s")
-                    # Extract text from data
-                    return self._extract_text(data)
-                
-                # Timeout after 5 minutes
+                    raw = self._extract_raw_text(data)
+                    logger.info(f"[302] Raw text (first 300 chars): {raw[:300]}")
+                    return raw
+
                 if elapsed > 300:
                     logger.warning(f"[302] Timeout after {elapsed:.0f}s")
                     raise TimeoutError(f"Async result timeout. Last: {result}")
-    
-    def _extract_response_from_content_str(self, content: str) -> str:
-        """Try to parse content as JSON with 'response' field, or extract it from
-        partial JSON-like strings; otherwise return content as-is.
+
+    def _extract_raw_text(self, data) -> str:
         """
-        # 1) Full JSON like {"response": "..."}
-        try:
-            obj = json.loads(content)
-            if isinstance(obj, dict) and "response" in obj:
-                return str(obj["response"])
-        except (json.JSONDecodeError, TypeError):
-            pass
+        Extract the raw content string from the API response data object.
 
-        # 2) Fallback: handle fragments such as '"response": "..."}'
-        # or similar JSON-like snippets that are not valid standalone JSON.
-        try:
-            import re
-            m = re.search(r'"response"\s*:\s*"([\s\S]*?)"\s*}?$', content)
-            if not m:
-                m = re.search(r'"response"\s*:\s*"([\s\S]*?)"', content)
-            if m:
-                inner = m.group(1)
-                # Decode common JSON escape sequences (\n, \", \\) if present.
-                try:
-                    return json.loads(f'"{inner}"')
-                except Exception:
-                    return inner
-        except Exception:
-            pass
+        This intentionally returns the model's text verbatim — it does NOT
+        peek inside any JSON the model may have embedded.  That is the job
+        of skills._parse_llm_json.
 
-        return content
-    
-    def _extract_text(self, data) -> str:
-        """Extract final text from the data field per docs."""
-        # Case 1: data is a dict (similar to OpenAI response)
+        Priority:
+          1. data dict  → choices[0].message.content  (OpenAI-compatible)
+          2. data dict  → direct "content" key
+          3. data str   → parse as OpenAI JSON, grab content
+          4. data str   → return as-is
+          5. anything else → str(data)
+        """
+        # ── Case 1: dict with OpenAI-style choices ────────────────────────
         if isinstance(data, dict):
-            # Try OpenAI-like choices
             if "choices" in data:
                 try:
                     msg = data["choices"][0].get("message") or {}
                     content = msg.get("content")
                     if isinstance(content, str):
-                        logger.info(f"[302] Found content in choices: {content[:100]}...")
-                        result = self._extract_response_from_content_str(content)
-                        logger.info(f"[302] Extracted: {result}")
-                        return result
+                        return content
                 except Exception as e:
-                    logger.info(f"[302] Error extracting from choices: {e}")
-                    pass
-            # Direct response field
-            if "response" in data:
-                logger.info(f"[302] Found direct 'response' field")
-                return str(data["response"])
-            # Fallback to JSON dump
-            logger.info(f"[302] Fallback: returning JSON dump")
+                    logger.warning(f"[302] Could not read choices[0].message.content: {e}")
+
+            # Direct "content" field (non-standard but seen in some providers)
+            if "content" in data:
+                return str(data["content"])
+
+            # Last resort: dump the whole dict so _parse_llm_json can try
+            logger.warning("[302] Unrecognised data dict shape; returning JSON dump.")
             return json.dumps(data, ensure_ascii=False)
 
-        # Case 2: data is a string (raw JSON or plain text)
+        # ── Case 2: string data ───────────────────────────────────────────
         if isinstance(data, str):
-            # Try to parse as full OpenAI-like response
+            # It might itself be a serialised OpenAI response
             try:
                 parsed = json.loads(data)
-                if isinstance(parsed, dict):
-                    logger.info(f"[302] Parsed JSON string into dict")
-                    if "choices" in parsed:
-                        try:
-                            msg = parsed["choices"][0].get("message") or {}
-                            content = msg.get("content")
-                            if isinstance(content, str):
-                                logger.info(f"[302] Found content in parsed choices: {content[:100]}...")
-                                result = self._extract_response_from_content_str(content)
-                                logger.info(f"[302] Extracted: {result}")
-                                return result
-                        except Exception as e:
-                            logger.info(f"[302] Error extracting from parsed choices: {e}")
-                            pass
-                    if "response" in parsed:
-                        logger.info(f"[302] Found 'response' in parsed dict")
-                        return str(parsed["response"])
-            except (json.JSONDecodeError, TypeError) as e:
-                logger.info(f"[302] Not valid JSON: {e}")
+                if isinstance(parsed, dict) and "choices" in parsed:
+                    msg = parsed["choices"][0].get("message") or {}
+                    content = msg.get("content")
+                    if isinstance(content, str):
+                        return content
+            except (json.JSONDecodeError, TypeError, KeyError):
                 pass
-            # Or parse as {"response": ...}
-            logger.info(f"[302] Trying to extract response from content string")
-            return self._extract_response_from_content_str(data)
+            # Otherwise treat the string as the raw model output directly
+            return data
 
-        # Unknown type -> stringify
-        logger.info(f"[302] Unknown data type: {type(data)}")
+        # ── Case 3: unknown type ──────────────────────────────────────────
+        logger.warning(f"[302] Unexpected data type {type(data)}; coercing to str.")
         return "" if data is None else str(data)
 
     async def aclose(self):
