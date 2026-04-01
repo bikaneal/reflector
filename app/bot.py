@@ -18,7 +18,10 @@ by each skill function in skills.py.
 import asyncio
 import logging
 import os
+import time
 from dataclasses import dataclass, field
+
+import db
 from enum import Enum
 from typing import List, Optional, Tuple
 
@@ -89,6 +92,9 @@ class UserSession:
     p3_new_understanding: str = ""
     p3_new_participation: str = ""
     p3_new_actions: str = ""
+
+    # ── DB session tracking ────────────────────────────────────────────────
+    session_db_id: str = ""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -214,6 +220,16 @@ class ReflectionBot:
         if self._active[user_id] == 0:
             del self._active[user_id]
 
+    # ── DB logging helpers ────────────────────────────────────────────────
+
+    def _make_session_id(self, user_id: int) -> str:
+        return f"{user_id}_{int(time.time())}"
+
+    async def _log_msg(self, user_id: int, role: str, text: str, state: str = "") -> None:
+        session = self._session(user_id)
+        if session.session_db_id:
+            await db.log_turn(session.session_db_id, user_id, role, text, state)
+
     # ── Message routing ───────────────────────────────────────────────────
 
     async def _route(self, user_id: int, chat_id: int, text: str) -> None:
@@ -248,6 +264,7 @@ class ReflectionBot:
                 await self._sender.send(chat_id, result["response"])
                 self._history.add(chat_id, "user", text)
                 self._history.add(chat_id, "assistant", result["response"])
+                await self._log_msg(user_id, "bot", result["response"], session.state.value)
                 summary_result = await p1_summary(
                     self._llm,
                     session.p1_goals_data,
@@ -257,14 +274,17 @@ class ReflectionBot:
                 )
                 if summary_result.get("layer_complete"):
                     session.p1_summary_text = summary_result.get("layer_data") or ""
+                    await db.update_session(session.session_db_id, p1_summary=session.p1_summary_text)
                     session.state = BotState.P1_AWAIT_CONFIRM
                     final_text = summary_result["response"] + AWAIT_CONFIRM_SUFFIX
                     await self._sender.send(chat_id, final_text)
                     self._history.add(chat_id, "assistant", summary_result["response"])
+                    await self._log_msg(user_id, "bot", final_text, session.state.value)
                 else:
                     # Summary formation failed — ask for more info
                     await self._sender.send(chat_id, summary_result["response"])
                     self._history.add(chat_id, "assistant", summary_result["response"])
+                    await self._log_msg(user_id, "bot", summary_result["response"], session.state.value)
                     # Stay in P1_RESULTS
                 return
             # layer not yet complete — fall through to normal send below
@@ -314,6 +334,7 @@ class ReflectionBot:
                 await self._sender.send(chat_id, result["response"])
                 self._history.add(chat_id, "user", text)
                 self._history.add(chat_id, "assistant", result["response"])
+                await self._log_msg(user_id, "bot", result["response"], session.state.value)
                 summary_result = await p2_summary(
                     self._llm,
                     session.episode,
@@ -324,13 +345,16 @@ class ReflectionBot:
                 )
                 if summary_result.get("layer_complete"):
                     session.p2_summary_text = summary_result.get("layer_data") or ""
+                    await db.update_session(session.session_db_id, p2_summary=session.p2_summary_text)
                     session.state = BotState.P2_AWAIT_CONFIRM
                     final_text = summary_result["response"] + AWAIT_CONFIRM_SUFFIX
                     await self._sender.send(chat_id, final_text)
                     self._history.add(chat_id, "assistant", summary_result["response"])
+                    await self._log_msg(user_id, "bot", final_text, session.state.value)
                 else:
                     await self._sender.send(chat_id, summary_result["response"])
                     self._history.add(chat_id, "assistant", summary_result["response"])
+                    await self._log_msg(user_id, "bot", summary_result["response"], session.state.value)
                     # Stay in P2_THINKING for another pass
                 return
 
@@ -381,6 +405,7 @@ class ReflectionBot:
                 await self._sender.send(chat_id, result["response"])
                 self._history.add(chat_id, "user", text)
                 self._history.add(chat_id, "assistant", result["response"])
+                await self._log_msg(user_id, "bot", result["response"], session.state.value)
                 final_result = await p3_summary(
                     self._llm,
                     session.episode,
@@ -396,12 +421,18 @@ class ReflectionBot:
                         "\n\n✅ Сессия рефлексии завершена. "
                         "Если хочешь начать новую сессию, введи /start."
                     )
+                    await db.update_session(
+                        session.session_db_id,
+                        p3_summary=final_result.get("layer_data") or "",
+                    )
+                    await db.close_session(session.session_db_id, BotState.DONE.value)
                 else:
                     # Coherence check failed — need to revisit a layer
                     # state stays at P3_ACTIONS; bot will prompt what to fix
                     pass
                 await self._sender.send(chat_id, final_text)
                 self._history.add(chat_id, "assistant", final_text)
+                await self._log_msg(user_id, "bot", final_text, session.state.value)
                 return
 
         # ── DONE state ────────────────────────────────────────────────────
@@ -427,6 +458,7 @@ class ReflectionBot:
                 await self._sender.send(chat_id, response_text)
                 self._history.add(chat_id, "user", text)
                 self._history.add(chat_id, "assistant", response_text)
+                await self._log_msg(user_id, "bot", response_text, session.state.value)
 
     # ── Telegram handlers ─────────────────────────────────────────────────
 
@@ -436,8 +468,11 @@ class ReflectionBot:
         self._reset(user_id, chat_id)
         session = self._session(user_id)
         session.state = BotState.P1_GOALS
+        session.session_db_id = self._make_session_id(user_id)
+        await db.create_session(session.session_db_id, user_id)
         await self._sender.send(chat_id, WELCOME_TEXT)
         self._history.add(chat_id, "assistant", WELCOME_TEXT)
+        await self._log_msg(user_id, "bot", WELCOME_TEXT, BotState.P1_GOALS.value)
 
     async def handle_restart(self, message) -> None:
         user_id = message.from_user.id
@@ -445,8 +480,11 @@ class ReflectionBot:
         self._reset(user_id, chat_id)
         session = self._session(user_id)
         session.state = BotState.P1_GOALS
+        session.session_db_id = self._make_session_id(user_id)
+        await db.create_session(session.session_db_id, user_id)
         await self._sender.send(chat_id, RESTART_TEXT)
         self._history.add(chat_id, "assistant", RESTART_TEXT)
+        await self._log_msg(user_id, "bot", RESTART_TEXT, BotState.P1_GOALS.value)
 
     async def handle_message(self, message) -> None:
         user_id = message.from_user.id
@@ -467,8 +505,23 @@ class ReflectionBot:
         # Auto-start if the user writes without /start
         if session.state == BotState.INIT:
             session.state = BotState.P1_GOALS
+            if not session.session_db_id:
+                session.session_db_id = self._make_session_id(user_id)
+                await db.create_session(session.session_db_id, user_id)
+
+        # Log incoming user message
+        await self._log_msg(user_id, "user", text, session.state.value)
+
+        async def _keep_typing():
+            while True:
+                try:
+                    await self._bot.send_chat_action(chat_id, "typing")
+                    await asyncio.sleep(4)
+                except asyncio.CancelledError:
+                    break
 
         self._enter(user_id)
+        typing_task = asyncio.create_task(_keep_typing())
         try:
             await self._route(user_id, chat_id, text)
         except Exception as exc:
@@ -478,6 +531,7 @@ class ReflectionBot:
                 "❗ Произошла ошибка. Попробуй ещё раз или перезапусти сессию командой /restart.",
             )
         finally:
+            typing_task.cancel()
             self._leave(user_id)
 
     # ── Polling loop ──────────────────────────────────────────────────────
@@ -523,6 +577,7 @@ class ReflectionBot:
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def main() -> None:
+    await db.init_db()
     provider = os.getenv("LLM_PROVIDER", "coze").lower()
     if provider == "302":
         llm = load_302_llm()
@@ -536,7 +591,10 @@ async def main() -> None:
     logger.info("LLM loaded (%s).", provider)
 
     bot = ReflectionBot(TELEGRAM_BOT_TOKEN, llm)
-    await bot.run()
+    try:
+        await bot.run()
+    finally:
+        await db.close_db()
 
 
 if __name__ == "__main__":
