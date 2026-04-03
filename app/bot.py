@@ -189,6 +189,11 @@ class ReflectionBot:
     """Core bot: routes each incoming message to the appropriate skill."""
 
     def __init__(self, token: str, llm):
+        proxy = os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY")
+        if proxy:
+            from telebot import asyncio_helper
+            asyncio_helper.proxy = proxy
+            logger.info(f"Telegram requests will use proxy: {proxy}")
         self._bot = AsyncTeleBot(token)
         self._llm = llm
         self._sender = MessageSender(self._bot)
