@@ -5,6 +5,7 @@ load_dotenv()
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+VK_BOT_TOKEN = os.getenv("VK_BOT_TOKEN")
 
 COZE_API_TOKEN = os.getenv("COZE_API_TOKEN")
 COZE_API_BASE = os.getenv("COZE_API_BASE", "https://www.coze.com/")
