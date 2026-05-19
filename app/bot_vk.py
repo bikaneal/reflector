@@ -1,15 +1,12 @@
 """
 bot_vk.py — Reflection-bot VK interface (vkbottle).
 
-State machine for the three-phase reflection flow:
+Kolb's Learning Cycle (four phases):
 
-  INIT
-	↓ /start or any message
-  P1_GOALS  → P1_ACTIONS  → P1_RESULTS  → P1_AWAIT_CONFIRM
-	↓ any message
-  P2_EPISODE → P2_ACTIONS → P2_INTERACTION → P2_THINKING → P2_AWAIT_CONFIRM
-	↓ any message
-  P3_UNDERSTANDING → P3_INTERACTION → P3_ACTIONS → DONE
+  CE  — Concrete Experience        : P1_GOALS → P1_ACTIONS → P1_RESULTS → P1_AWAIT_CONFIRM
+  RO  — Reflective Observation     : P2_EPISODE → P2_ACTIONS → P2_INTERACTION → P2_THINKING → P2_AWAIT_CONFIRM
+  AC  — Abstract Conceptualization : P3_UNDERSTANDING
+  AE  — Active Experimentation     : P3_INTERACTION → P3_ACTIONS → DONE
 
 State transitions are driven by the `layer_complete` flag returned
 by each skill function in skills.py.
@@ -166,19 +163,20 @@ class MessageSender:
 # ─────────────────────────────────────────────────────────────────────────────
 
 WELCOME_TEXT = (
-	"Привет! Я помогу тебе пройти через рефлексию учебной недели.\n\n"
-	"Мы работаем в три этапа:\n"
-	"1️⃣ Восстановим неделю — задачи, действия, результаты.\n"
-	"2️⃣ Разберём один эпизод в трёх слоях: деятельность, взаимодействие, мышление.\n"
-	"3️⃣ Сконструируем новый способ действия.\n\n"
+	"Привет! Я помогу тебе пройти через цикл Колба — четыре фазы осмысления опыта.\n\n"
+	"Мы работаем в четыре шага:\n"
+	"1️⃣ Конкретный опыт (CE) — опишем одну конкретную ситуацию.\n"
+	"2️⃣ Рефлексивное наблюдение (RO) — осмыслим её: эмоции, наблюдения, сильные и слабые стороны.\n"
+	"3️⃣ Абстрактная концептуализация (AC) — сформулируем новые идеи и выводы.\n"
+	"4️⃣ Активное экспериментирование (AE) — наметим конкретные шаги для проверки.\n\n"
 	"Всё, что ты напишешь, остаётся между нами и служит только для рефлексии. "
 	"Пиши свободно.\n\n"
-	"Давай начнём. С какими задачами и целями ты входил в эту неделю?"
+	"Давай начнём. Расскажи о конкретной ситуации из недавнего времени, которую ты хочешь осмыслить. Что именно произошло?"
 )
 
 RESTART_TEXT = (
 	"Сессия рефлексии сброшена. Начинаем сначала.\n\n"
-	"С какими задачами и целями ты входил в эту неделю?"
+	"Расскажи о конкретной ситуации, которую ты хочешь осмыслить. Что именно произошло?"
 )
 
 AWAIT_CONFIRM_SUFFIX = "\n\nНапиши что-нибудь, когда будешь готов продолжить."
